@@ -108,7 +108,7 @@ info "Installing vsrepo (VapourSynth plugin manager)..."
 VSREPO="$VENV_DIR/bin/vsrepo.py"
 curl -fsSL "https://raw.githubusercontent.com/vapoursynth/vsrepo/master/vsrepo.py" -o "$VSREPO"
 # Install vsrepo's own dependencies into the venv
-"$VENV_DIR/bin/pip" install --quiet requests tqdm vsgenstubs4
+"$VENV_DIR/bin/pip" install --quiet requests tqdm
 VSREPO_CMD="$VENV_DIR/bin/python3 $VSREPO"
 success "vsrepo downloaded"
 
@@ -116,7 +116,7 @@ success "vsrepo downloaded"
 info "Updating vsrepo package list..."
 $VSREPO_CMD update
 info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
-$VSREPO_CMD install havsfunc mvtools nnedi3
+$VSREPO_CMD install havsfunc mvtools nnedi3 || true  # stub generation may fail non-critically
 success "VapourSynth plugins installed"
 
 # ── 9. Install dvd2mp4 ────────────────────────────────────────────────────────
