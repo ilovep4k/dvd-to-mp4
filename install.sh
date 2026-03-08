@@ -58,15 +58,49 @@ else
     warn "libffms2.dylib not found at $FFMS2_LIB — skipping symlink"
 fi
 
-# ── 5. VapourSynth plugins via vsrepo ─────────────────────────────────────────
-info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
+# ── 5. vsrepo — VapourSynth plugin manager ────────────────────────────────────
+# vsrepo is not bundled with the brew formula; install it via brew's pip.
+info "Installing vsrepo (VapourSynth plugin manager)..."
+BREW_PIP="$(brew --prefix)/bin/pip3"
 if ! command -v vsrepo &>/dev/null; then
-    die "vsrepo not found. It should have been installed with VapourSynth.\nTry: brew reinstall vapoursynth"
+    if [[ -x "$BREW_PIP" ]]; then
+        "$BREW_PIP" install vsrepo --quiet
+    else
+        # find any brew python pip
+        for ver in 3.14 3.13 3.12 3.11 3.10; do
+            candidate="$(brew --prefix)/opt/python@$ver/bin/pip3"
+            if [[ -x "$candidate" ]]; then
+                "$candidate" install vsrepo --quiet
+                break
+            fi
+        done
+    fi
 fi
-vsrepo install havsfunc mvtools nnedi3
+
+# vsrepo may land in brew's bin or a versioned bin — find it
+VSREPO=""
+for candidate in \
+    "$(brew --prefix)/bin/vsrepo" \
+    "$(brew --prefix)/opt/python@3.14/bin/vsrepo" \
+    "$(brew --prefix)/opt/python@3.13/bin/vsrepo" \
+    "$(brew --prefix)/opt/python@3.12/bin/vsrepo"; do
+    if [[ -x "$candidate" ]]; then
+        VSREPO="$candidate"
+        break
+    fi
+done
+
+if [[ -z "$VSREPO" ]]; then
+    die "vsrepo could not be found or installed. Try manually: pip3 install vsrepo"
+fi
+success "vsrepo found: $VSREPO"
+
+# ── 6a. VapourSynth plugins via vsrepo ────────────────────────────────────────
+info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
+"$VSREPO" install havsfunc mvtools nnedi3
 success "VapourSynth plugins installed"
 
-# ── 6. Locate a suitable Python (>=3.10) ──────────────────────────────────────
+# ── 6b. Locate a suitable Python (>=3.10) ─────────────────────────────────────
 info "Locating Python 3.10+..."
 
 # Prefer brew's python3 because VapourSynth's Python bindings are installed there.
