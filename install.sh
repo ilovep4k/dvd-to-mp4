@@ -101,18 +101,20 @@ fi
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 success "Virtual environment created"
 
-# ── 7. Install vsrepo into the venv ───────────────────────────────────────────
-# vsrepo is not bundled with the brew vapoursynth formula.
-# Installing into our own venv avoids PEP 668 restrictions on brew's Python.
+# ── 7. Install vsrepo ─────────────────────────────────────────────────────────
+# vsrepo is not on PyPI and not bundled with the brew vapoursynth formula.
+# Download the script directly from the VapourSynth GitHub repo.
 info "Installing vsrepo (VapourSynth plugin manager)..."
-"$VENV_DIR/bin/pip" install --quiet vsrepo
-VSREPO="$VENV_DIR/bin/vsrepo"
-[[ -x "$VSREPO" ]] || die "vsrepo install failed — check pip output above."
-success "vsrepo installed"
+VSREPO="$VENV_DIR/bin/vsrepo.py"
+curl -fsSL "https://raw.githubusercontent.com/vapoursynth/vsrepo/master/vsrepo.py" -o "$VSREPO"
+# Install vsrepo's own dependencies into the venv
+"$VENV_DIR/bin/pip" install --quiet requests tqdm
+VSREPO_CMD="$VENV_DIR/bin/python3 $VSREPO"
+success "vsrepo downloaded"
 
 # ── 8. Install VapourSynth plugins ────────────────────────────────────────────
 info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
-"$VSREPO" install havsfunc mvtools nnedi3
+$VSREPO_CMD install havsfunc mvtools nnedi3
 success "VapourSynth plugins installed"
 
 # ── 9. Install dvd2mp4 ────────────────────────────────────────────────────────
