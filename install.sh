@@ -27,7 +27,6 @@ info "Checking for Homebrew..."
 if ! command -v brew &>/dev/null; then
     info "Installing Homebrew..."
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-    # Add brew to PATH for the rest of this session (Apple Silicon or Intel)
     if [[ -f /opt/homebrew/bin/brew ]]; then
         eval "$(/opt/homebrew/bin/brew shellenv)"
     elif [[ -f /usr/local/bin/brew ]]; then
@@ -42,7 +41,6 @@ brew install ffmpeg vapoursynth ffms2
 success "ffmpeg, vapoursynth, ffms2 installed"
 
 # ── 4. ffms2 → VapourSynth plugin symlink ────────────────────────────────────
-# brew caveats require manually linking ffms2 into the VapourSynth plugin dir.
 info "Linking ffms2 into VapourSynth plugin directory..."
 FFMS2_LIB="$(brew --prefix ffms2)/lib/libffms2.dylib"
 VS_PLUGIN_DIR="$(brew --prefix vapoursynth)/lib/vapoursynth"
@@ -58,56 +56,12 @@ else
     warn "libffms2.dylib not found at $FFMS2_LIB — skipping symlink"
 fi
 
-# ── 5. vsrepo — VapourSynth plugin manager ────────────────────────────────────
-# vsrepo is not bundled with the brew formula; install it via brew's pip.
-info "Installing vsrepo (VapourSynth plugin manager)..."
-BREW_PIP="$(brew --prefix)/bin/pip3"
-if ! command -v vsrepo &>/dev/null; then
-    if [[ -x "$BREW_PIP" ]]; then
-        "$BREW_PIP" install vsrepo --quiet
-    else
-        # find any brew python pip
-        for ver in 3.14 3.13 3.12 3.11 3.10; do
-            candidate="$(brew --prefix)/opt/python@$ver/bin/pip3"
-            if [[ -x "$candidate" ]]; then
-                "$candidate" install vsrepo --quiet
-                break
-            fi
-        done
-    fi
-fi
-
-# vsrepo may land in brew's bin or a versioned bin — find it
-VSREPO=""
-for candidate in \
-    "$(brew --prefix)/bin/vsrepo" \
-    "$(brew --prefix)/opt/python@3.14/bin/vsrepo" \
-    "$(brew --prefix)/opt/python@3.13/bin/vsrepo" \
-    "$(brew --prefix)/opt/python@3.12/bin/vsrepo"; do
-    if [[ -x "$candidate" ]]; then
-        VSREPO="$candidate"
-        break
-    fi
-done
-
-if [[ -z "$VSREPO" ]]; then
-    die "vsrepo could not be found or installed. Try manually: pip3 install vsrepo"
-fi
-success "vsrepo found: $VSREPO"
-
-# ── 6a. VapourSynth plugins via vsrepo ────────────────────────────────────────
-info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
-"$VSREPO" install havsfunc mvtools nnedi3
-success "VapourSynth plugins installed"
-
-# ── 6b. Locate a suitable Python (>=3.10) ─────────────────────────────────────
+# ── 5. Locate brew Python (>=3.10) ────────────────────────────────────────────
+# Must use brew's Python so the venv can see brew-installed vapoursynth bindings.
 info "Locating Python 3.10+..."
-
-# Prefer brew's python3 because VapourSynth's Python bindings are installed there.
 BREW_PREFIX="$(brew --prefix)"
 BREW_PYTHON=""
 
-# Walk common brew Python versions newest-first
 for ver in 3.14 3.13 3.12 3.11 3.10; do
     candidate="$BREW_PREFIX/opt/python@$ver/bin/python3"
     if [[ -x "$candidate" ]]; then
@@ -116,8 +70,7 @@ for ver in 3.14 3.13 3.12 3.11 3.10; do
     fi
 done
 
-# Fall back to brew's generic python3 symlink
-if [[ -z "$BREW_PYTHON" ]] && command -v "$BREW_PREFIX/bin/python3" &>/dev/null; then
+if [[ -z "$BREW_PYTHON" ]] && [[ -x "$BREW_PREFIX/bin/python3" ]]; then
     BREW_PYTHON="$BREW_PREFIX/bin/python3"
 fi
 
@@ -134,50 +87,63 @@ if [[ "$PY_MAJ" -lt 3 ]] || [[ "$PY_VER" -lt 10 ]]; then
     brew install python@3.12
     BREW_PYTHON="$(brew --prefix python@3.12)/bin/python3"
 fi
-
 success "Using Python: $("$BREW_PYTHON" --version)"
 
-# ── 7. Create virtual environment ─────────────────────────────────────────────
-# --system-site-packages allows the venv to see brew-installed vapoursynth bindings.
+# ── 6. Create virtual environment ─────────────────────────────────────────────
+# --system-site-packages lets the venv see brew-installed vapoursynth bindings.
+# Venvs are exempt from PEP 668, so pip works freely inside them.
 info "Creating virtual environment at $VENV_DIR..."
 if [[ -d "$VENV_DIR" ]]; then
     warn "Existing .venv found — removing and recreating..."
     rm -rf "$VENV_DIR"
 fi
 "$BREW_PYTHON" -m venv --system-site-packages "$VENV_DIR"
+"$VENV_DIR/bin/pip" install --quiet --upgrade pip
 success "Virtual environment created"
 
-# ── 8. Install dvd2mp4 Python package ─────────────────────────────────────────
-info "Installing dvd2mp4 Python package..."
-"$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR"
-success "dvd2mp4 installed (editable)"
+# ── 7. Install vsrepo into the venv ───────────────────────────────────────────
+# vsrepo is not bundled with the brew vapoursynth formula.
+# Installing into our own venv avoids PEP 668 restrictions on brew's Python.
+info "Installing vsrepo (VapourSynth plugin manager)..."
+"$VENV_DIR/bin/pip" install --quiet vsrepo
+VSREPO="$VENV_DIR/bin/vsrepo"
+[[ -x "$VSREPO" ]] || die "vsrepo install failed — check pip output above."
+success "vsrepo installed"
 
-# ── 9. Verify dependencies ────────────────────────────────────────────────────
+# ── 8. Install VapourSynth plugins ────────────────────────────────────────────
+info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
+"$VSREPO" install havsfunc mvtools nnedi3
+success "VapourSynth plugins installed"
+
+# ── 9. Install dvd2mp4 ────────────────────────────────────────────────────────
+info "Installing dvd2mp4..."
+"$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR"
+success "dvd2mp4 installed"
+
+# ── 10. Verify ────────────────────────────────────────────────────────────────
 info "Verifying all dependencies..."
 if "$VENV_DIR/bin/dvd2mp4" --check-deps; then
     success "All dependencies verified"
 else
     warn "Some dependencies are missing — see output above."
-    warn "Re-run this script or install missing items manually, then run: dvd2mp4 --check-deps"
 fi
 
-# ── 10. Done — print usage instructions ───────────────────────────────────────
+# ── 11. Done ──────────────────────────────────────────────────────────────────
 SHELL_RC="$HOME/.zshrc"
 [[ "$SHELL" == */bash ]] && SHELL_RC="$HOME/.bashrc"
 
 echo ""
 echo -e "${GREEN}${BOLD}Installation complete!${RESET}"
 echo ""
-echo "To use dvd2mp4, add the venv to your PATH (one-time setup):"
+echo "Add dvd2mp4 to your PATH (one-time setup):"
 echo ""
 echo -e "  ${BOLD}echo 'export PATH=\"$VENV_DIR/bin:\$PATH\"' >> $SHELL_RC && source $SHELL_RC${RESET}"
 echo ""
 echo "Then:"
 echo "  dvd2mp4              # Launch GUI"
 echo "  dvd2mp4 movie.iso    # Convert via CLI"
-echo "  dvd2mp4 --check-deps # Verify everything is working"
+echo "  dvd2mp4 --check-deps # Verify"
 echo ""
-echo "To update dvd2mp4 in the future:"
-echo "  cd $REPO_DIR && git pull && .venv/bin/pip install -e ."
+echo "To update later:"
+echo "  cd $REPO_DIR && git pull && $VENV_DIR/bin/pip install -e ."
 echo ""
