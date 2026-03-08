@@ -108,7 +108,7 @@ info "Installing vsrepo (VapourSynth plugin manager)..."
 VSREPO="$VENV_DIR/bin/vsrepo.py"
 curl -fsSL "https://raw.githubusercontent.com/vapoursynth/vsrepo/master/vsrepo.py" -o "$VSREPO"
 # Install vsrepo's own dependencies into the venv
-"$VENV_DIR/bin/pip" install --quiet requests tqdm
+"$VENV_DIR/bin/pip" install --quiet requests tqdm vsgenstubs4
 VSREPO_CMD="$VENV_DIR/bin/python3 $VSREPO"
 success "vsrepo downloaded"
 
