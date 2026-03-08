@@ -203,6 +203,8 @@ class DVDExtractor:
         """
         cmd = [
             "ffprobe",
+            "-analyzeduration", "100M",
+            "-probesize", "100M",
             "-f", "concat",
             "-safe", "0",
             "-i", str(concat_list_path),
@@ -496,7 +498,9 @@ class DVDExtractor:
                         probe_info = self._probe_title(concat_list)
                         duration = probe_info.get("duration", 0)
 
-                        if duration < self.MIN_TITLE_DURATION:
+                        if duration == 0.0:
+                            logger.warning(f"Title {title_num}: could not determine duration, processing anyway")
+                        elif duration < self.MIN_TITLE_DURATION:
                             logger.info(f"Skipping title {title_num} (duration: {duration:.1f}s < {self.MIN_TITLE_DURATION}s)")
                             continue
 
