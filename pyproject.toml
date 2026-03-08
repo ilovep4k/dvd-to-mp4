@@ -29,6 +29,7 @@ classifiers = [
 dependencies = [
     "scenedetect[opencv]>=0.6.4",
     "tkinterdnd2>=0.4.2",
+    "vsutil",
 ]
 
 [project.optional-dependencies]

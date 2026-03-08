@@ -11,6 +11,7 @@ Handles QTGMC deinterlacing and H.265 encoding pipeline, including:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import tempfile
@@ -154,10 +155,31 @@ def _generate_vapoursynth_script(
     """
     tff_value = "True" if field_order.lower() == "tff" else "False"
 
-    script = f"""import vapoursynth as vs
+    # Plugin dirs to search — same list as deps.py so vspipe is self-contained
+    plugin_dirs_repr = repr([
+        os.path.expanduser("~/.config/vapoursynth"),
+        os.path.expanduser("~/.local/lib/vapoursynth"),
+        "/opt/homebrew/opt/vapoursynth/lib/vapoursynth",
+        "/usr/local/opt/vapoursynth/lib/vapoursynth",
+    ])
+
+    script = f"""import glob
+import os
+import vapoursynth as vs
 import havsfunc as haf
 
 core = vs.core
+
+# Explicitly load binary plugins so the script works regardless of VS
+# auto-load configuration (vsrepo installs to ~/.local/lib/vapoursynth,
+# which is not always in VS's default autoload path on macOS).
+for _d in {plugin_dirs_repr}:
+    for _f in glob.glob(os.path.join(_d, "*.dylib")):
+        try:
+            core.std.LoadPlugin(_f)
+        except Exception:
+            pass
+
 clip = core.ffms2.Source(source='{input_path.resolve()}')
 
 # QTGMC deinterlacing: 480i @ 29.97fps → 480p @ 59.94fps

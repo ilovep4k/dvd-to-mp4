@@ -119,6 +119,30 @@ info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
 $VSREPO_CMD install havsfunc mvtools nnedi3 || true  # stub generation may fail non-critically
 success "VapourSynth plugins installed"
 
+# ── 8b. Link vsrepo plugins into VapourSynth autoload directory ───────────────
+# vsrepo installs to ~/.local/lib/vapoursynth but VS autoloads from
+# ~/.config/vapoursynth. Symlink them so both vspipe and the Python API
+# find the plugins without any manual configuration.
+info "Linking VapourSynth plugins into autoload directory..."
+VS_AUTOLOAD_DIR="$HOME/.config/vapoursynth"
+VSREPO_PLUGIN_DIR="$HOME/.local/lib/vapoursynth"
+mkdir -p "$VS_AUTOLOAD_DIR"
+if [[ -d "$VSREPO_PLUGIN_DIR" ]]; then
+    for dylib in "$VSREPO_PLUGIN_DIR"/*.dylib; do
+        [[ -f "$dylib" ]] || continue
+        ln -sf "$dylib" "$VS_AUTOLOAD_DIR/" 2>/dev/null || true
+    done
+    success "Plugin links created in $VS_AUTOLOAD_DIR"
+else
+    warn "vsrepo plugin dir not found at $VSREPO_PLUGIN_DIR — skipping"
+fi
+# Also link the brew-installed ffms2 into the autoload dir
+BREW_VS_PLUGIN_DIR="$(brew --prefix vapoursynth)/lib/vapoursynth"
+for dylib in "$BREW_VS_PLUGIN_DIR"/*.dylib; do
+    [[ -f "$dylib" ]] || continue
+    ln -sf "$dylib" "$VS_AUTOLOAD_DIR/" 2>/dev/null || true
+done
+
 # ── 9. Install dvd2mp4 ────────────────────────────────────────────────────────
 info "Installing dvd2mp4..."
 "$VENV_DIR/bin/pip" install --quiet -e "$REPO_DIR"

@@ -7,11 +7,48 @@ for the dvd2mp4 app, including external tools and Python modules.
 
 from __future__ import annotations
 
+import glob
+import os
 import platform
 import shutil
 import sys
 from dataclasses import dataclass, field
 from typing import Dict, List
+
+# Common VapourSynth plugin directories on macOS (vsrepo user install + system)
+_VS_PLUGIN_DIRS = [
+    os.path.expanduser("~/.config/vapoursynth"),
+    os.path.expanduser("~/.local/lib/vapoursynth"),
+    "/opt/homebrew/opt/vapoursynth/lib/vapoursynth",
+    "/usr/local/opt/vapoursynth/lib/vapoursynth",
+]
+
+_vs_plugins_loaded = False
+
+
+def _load_vs_plugins() -> None:
+    """Explicitly load VapourSynth binary plugins from known paths.
+
+    VapourSynth on macOS does not always auto-load from the vsrepo user
+    install directory (~/.local/lib/vapoursynth). This function loads every
+    .dylib it finds in the known plugin directories so the app is not
+    dependent on VS's auto-load configuration.
+    """
+    global _vs_plugins_loaded
+    if _vs_plugins_loaded:
+        return
+    _vs_plugins_loaded = True
+    try:
+        import vapoursynth as vs
+        core = vs.core
+        for plugin_dir in _VS_PLUGIN_DIRS:
+            for dylib in glob.glob(os.path.join(plugin_dir, "*.dylib")):
+                try:
+                    core.std.LoadPlugin(dylib)
+                except Exception:
+                    pass  # already loaded or incompatible — not fatal
+    except ImportError:
+        pass
 
 
 @dataclass
@@ -102,6 +139,8 @@ def _check_python_module(module_name: str) -> bool:
 
 
 def _check_vapoursynth_plugin(plugin_name: str) -> bool:
+    _load_vs_plugins()  # ensure plugins are loaded before checking
+    # (original body below)
     """Check if a VapourSynth plugin is available.
 
     havsfunc is a Python script importable as a module.
