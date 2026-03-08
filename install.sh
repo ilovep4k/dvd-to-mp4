@@ -37,8 +37,8 @@ success "Homebrew found: $(brew --version | head -1)"
 
 # ── 3. System dependencies ────────────────────────────────────────────────────
 info "Installing system dependencies via Homebrew..."
-brew install ffmpeg vapoursynth ffms2
-success "ffmpeg, vapoursynth, ffms2 installed"
+brew install ffmpeg vapoursynth ffms2 p7zip
+success "ffmpeg, vapoursynth, ffms2, p7zip installed"
 
 # ── 4. ffms2 → VapourSynth plugin symlink ────────────────────────────────────
 info "Linking ffms2 into VapourSynth plugin directory..."
