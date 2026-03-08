@@ -111,7 +111,7 @@ class ConversionPipeline:
         if self.callbacks.on_stage_change:
             self.callbacks.on_stage_change(stage_name, stage_num, total)
 
-    def _emit_progress(self, stage: str, current: int, total: int, message: str) -> None:
+    def _emit_progress(self, stage: str, current: int, total: int, message: str = "") -> None:
         """Emit progress callback."""
         if self.callbacks.on_progress:
             self.callbacks.on_progress(stage, current, total, message)
