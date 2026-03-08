@@ -5,6 +5,8 @@ CLI entry point for dvd2mp4.
 Handles both GUI mode (no arguments) and CLI mode (with ISO path).
 """
 
+from __future__ import annotations
+
 import argparse
 import logging
 import sys

@@ -11,6 +11,8 @@ The pipeline runs in a separate thread to keep the GUI responsive and
 supports progress callbacks, cancellation, and comprehensive error handling.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import shutil

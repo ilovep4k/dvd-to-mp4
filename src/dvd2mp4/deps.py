@@ -5,6 +5,8 @@ This module checks that all required external dependencies are installed
 for the dvd2mp4 app, including external tools and Python modules.
 """
 
+from __future__ import annotations
+
 import platform
 import shutil
 import sys

@@ -8,6 +8,8 @@ Handles QTGMC deinterlacing and H.265 encoding pipeline, including:
 - Progress reporting and error handling
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import subprocess

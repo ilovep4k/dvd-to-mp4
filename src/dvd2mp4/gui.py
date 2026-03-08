@@ -5,6 +5,8 @@ Provides a clean interface for converting DVD ISO files to MP4 format,
 including progress tracking, logging, and error handling.
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import threading

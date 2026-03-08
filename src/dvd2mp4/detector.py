@@ -6,6 +6,8 @@ fade-to-black transitions. It groups chapters between detected fades into
 logical scenes and provides JSON output for downstream processing.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 from dataclasses import dataclass, field

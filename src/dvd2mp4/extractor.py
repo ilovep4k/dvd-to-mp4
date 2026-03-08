@@ -4,6 +4,8 @@ DVD ISO extraction module for extracting titles, chapters, menus, and images.
 Handles cross-platform ISO mounting, DVD structure parsing, and content extraction.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import platform
