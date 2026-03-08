@@ -1,180 +1,304 @@
-# DVD to MP4 Converter
+# dvd2mp4
 
-A powerful, professional-grade DVD ISO to H.265 MP4 converter with advanced deinterlacing capabilities. Combines lsdvd for chapter/title extraction, VapourSynth with QTGMC for high-quality deinterlacing, FFmpeg for encoding, and PySceneDetect for intelligent scene detection—all wrapped in an intuitive GUI or command-line interface.
+Convert DVD ISO files to high-quality H.265 MP4 scene files with professional-grade QTGMC deinterlacing and automatic scene detection.
 
-## Features
+Drop an ISO onto the GUI, walk away, come back to individual scene files — fully deinterlaced from 480i to 59.94fps progressive.
 
-- **Intelligent Scene Detection**: Automatically detects scene changes to optimize encoding parameters per segment
-- **Advanced Deinterlacing**: Uses QTGMC (Quarter Pixel Temporally Generated Motion Compensated frames) for professional-grade deinterlacing
-- **Modern Codec**: H.265/HEVC encoding with configurable quality (CRF)
-- **Batch Processing Ready**: CLI support for scripting and automation
-- **GUI & CLI Modes**: Launch the GUI by default, or use the command line for headless conversion
-- **Chapter Detection**: Automatic extraction of DVD chapter information
-- **Dependency Checker**: Built-in tool to verify all external dependencies
-- **Progress Tracking**: Real-time progress indicators and stage logging
+## What It Does
 
-## Requirements
+dvd2mp4 takes a DVD ISO and runs it through a 4-stage pipeline:
 
-### Python
-- Python 3.10 or newer
+1. **Extract** — Mounts the ISO, extracts all titles and chapters as raw MPEG-2, grabs the DVD menu video, and copies any images found on the disc. Titles under 60 seconds (FBI warnings, studio logos) are skipped automatically.
 
-### External Dependencies
+2. **Detect Scenes** — Runs [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) with a threshold detector tuned for fade-to-black transitions. Groups chapters into scenes (e.g., chapters 1–5 = Scene 1, chapters 6–11 = Scene 2). Falls back to content-based detection if no fades are found.
+
+3. **Encode** — Pipes each scene through [VapourSynth](http://www.vapoursynth.com/) + [QTGMC](https://github.com/HomeOfVapourSynthEvolution/havsfunc) for motion-compensated deinterlacing (480i @ 29.97fps → 480p @ 59.94fps), then encodes to H.265/HEVC at CRF 18 via FFmpeg. Audio is transcoded from AC3 to AAC. Subtitles are extracted to `.srt` sidecars.
+
+4. **Organize** — Structures everything into a clean output folder and removes temp files.
+
+## Output Structure
+
+```
+Movie_Name/
+├── cover/
+│   └── menu_video.mp4          # DVD menu background loop
+├── images/
+│   ├── photo_01.jpg            # Any images found on the disc
+│   └── photo_02.jpg
+├── Title_01_Scene_01.mp4       # Individual scene files
+├── Title_01_Scene_02.mp4       # 59.94fps progressive, H.265 CRF 18
+├── Title_01_Scene_03.mp4
+├── Title_02_Scene_01.mp4       # All titles processed (extras, BTS, etc.)
+├── scene_map.json              # Scene detection metadata
+└── process.log                 # Full processing log
+```
+
+## Why QTGMC?
+
+DVD content is interlaced at 480i / 29.97fps. Basic "bob" deinterlacing doubles the frame rate by turning each field into a frame, but produces visible combing and shimmer artifacts. QTGMC uses temporal motion-compensated interpolation across multiple frames to produce dramatically cleaner 59.94fps progressive output. It's the gold standard for interlaced video processing.
+
+## Installation
+
+### 1. External Dependencies
 
 #### macOS
+
 ```bash
-# Install via Homebrew
-brew install ffmpeg vapoursynth lsdvd
+brew install ffmpeg vapoursynth
 ```
 
 #### Linux (Ubuntu/Debian)
+
 ```bash
-sudo apt-get install ffmpeg vapoursynth lsdvd
+sudo apt-get install ffmpeg vapoursynth
 ```
 
 #### Windows
+
 Download and install:
+
 - [FFmpeg](https://ffmpeg.org/download.html) (add to PATH)
-- [VapourSynth](http://www.vapoursynth.com/) (installer)
-- [lsdvd](http://0pointer.de/blog/projects/lsdvd.html) (optional, for chapter detection)
+- [VapourSynth](http://www.vapoursynth.com/) (use the installer)
 
-### VapourSynth Plugins
+### 2. VapourSynth Plugins
 
-After installing VapourSynth, install required plugins:
+QTGMC requires these VapourSynth plugins: **havsfunc**, **mvtools**, and **nnedi3**.
+
+#### macOS / Linux
 
 ```bash
-# macOS / Linux
+pip install havsfunc mvsfunc
 vsrepo install havsfunc mvtools nnedi3
-
-# Windows (use VapourSynth's built-in plugin manager)
-# Or manually download from https://github.com/AkarinVS/vs-mlrt
 ```
 
-All dependencies can be checked with:
+#### Windows
+
+Use VapourSynth's built-in plugin manager or install via vsrepo.
+
+### 3. Install dvd2mp4
+
+**From GitHub:**
+
+```bash
+pip install git+https://github.com/ilovep4k/dvd-to-mp4.git
+```
+
+**From a local clone:**
+
+```bash
+git clone https://github.com/ilovep4k/dvd-to-mp4.git
+cd dvd-to-mp4
+pip install -e .
+```
+
+**Using a virtual environment (recommended if Homebrew manages your Python):**
+
+```bash
+cd dvd-to-mp4
+python3 -m venv venv
+source venv/bin/activate
+pip install -e .
+pip install vapoursynth havsfunc mvsfunc
+```
+
+### 4. Verify Setup
+
 ```bash
 dvd2mp4 --check-deps
 ```
 
-## Installation
-
-```bash
-pip install git+https://github.com/USERNAME/dvd2mp4.git
-```
-
-For GUI support, install with extras:
-```bash
-pip install git+https://github.com/USERNAME/dvd2mp4.git[gui]
-```
+This checks for FFmpeg, ffprobe, VapourSynth (vspipe), QTGMC (havsfunc), mvtools, nnedi3, and PySceneDetect. Any missing dependencies will show platform-specific install instructions.
 
 ## Usage
 
-### GUI Mode
+### GUI Mode (Default)
 
-Launch the graphical interface:
 ```bash
 dvd2mp4
 ```
 
-The GUI allows you to:
-- Select an ISO file
-- Choose output directory
-- Configure encoding parameters
-- Monitor conversion progress
-- View output files after completion
+Launches a tkinter window with a drag-and-drop zone. Drop an ISO file onto it and the pipeline starts automatically. The window shows real-time progress, stage tracking, and a scrolling log panel.
 
 ### CLI Mode
 
-Convert an ISO file:
 ```bash
+# Basic usage
 dvd2mp4 movie.iso
-```
 
-Specify output directory:
-```bash
+# Custom output directory
 dvd2mp4 movie.iso --output ~/Videos
-```
 
-Fine-tune encoding quality and speed:
-```bash
-dvd2mp4 movie.iso --crf 20 --preset Medium
-```
+# Adjust encoding quality
+dvd2mp4 movie.iso --crf 20
 
-Adjust scene detection sensitivity:
-```bash
-dvd2mp4 movie.iso --threshold 10.5
-```
+# Change QTGMC preset (Slow = best quality, Fast = fastest)
+dvd2mp4 movie.iso --preset Medium
 
-Combine options:
-```bash
+# Adjust scene detection sensitivity (lower = more sensitive to fades)
+dvd2mp4 movie.iso --threshold 10
+
+# Combine options with verbose logging
 dvd2mp4 movie.iso -o ~/Videos --crf 18 --preset Slow --threshold 12 -v
-```
 
-Check dependencies without converting:
-```bash
+# Check dependencies
 dvd2mp4 --check-deps
-```
 
-Enable verbose logging:
-```bash
-dvd2mp4 movie.iso --verbose
-```
-
-Show version:
-```bash
+# Show version
 dvd2mp4 --version
-```
-
-## How It Works
-
-The converter uses a 4-stage pipeline:
-
-1. **Source Analysis**: Extracts chapter information and frame properties from the DVD ISO using lsdvd and FFmpeg
-2. **Scene Detection**: Analyzes video frames to detect scene boundaries using PySceneDetect
-3. **Deinterlacing**: Applies QTGMC (via VapourSynth) to remove interlacing artifacts with temporal motion compensation
-4. **Encoding**: Compresses the deinterlaced video to H.265/HEVC MP4 with FFmpeg
-
-Each stage provides progress feedback and error handling.
-
-## Output Structure
-
-After conversion, the output directory contains:
-
-```
-output_directory/
-├── movie.mp4              # Final converted file
-├── .dvd2mp4/
-│   ├── metadata.json      # Chapter and frame information
-│   ├── scenes.json        # Detected scene boundaries
-│   ├── logs/
-│   │   ├── analysis.log
-│   │   ├── deinterlace.log
-│   │   └── encode.log
-│   └── temp/              # Intermediate files (cleaned up after completion)
 ```
 
 ## Configuration
 
-CLI flags for controlling conversion:
-
-| Flag | Type | Default | Description |
-|------|------|---------|-------------|
-| `iso_path` | string | — | Path to DVD ISO file |
-| `-o, --output` | path | ISO directory | Output directory for MP4 |
-| `--crf` | 0-51 | 18 | H.265 quality (lower = better) |
-| `--preset` | Slow / Medium / Fast | Slow | QTGMC deinterlacing speed |
-| `--threshold` | float | 12 | PySceneDetect sensitivity |
-| `-v, --verbose` | flag | — | Enable debug logging |
-| `--check-deps` | flag | — | Verify dependencies and exit |
-| `--version` | flag | — | Show version number |
+| Flag | Default | Description |
+|---|---|---|
+| `iso_path` | — | Path to DVD ISO file (positional argument) |
+| `-o, --output` | Same directory as ISO | Output directory for converted files |
+| `--crf` | `18` | H.265 quality factor (0 = lossless, 18 = visually lossless, 51 = worst) |
+| `--preset` | `Slow` | QTGMC deinterlacing preset: `Fast`, `Medium`, `Slow` |
+| `--threshold` | `12` | Scene detection sensitivity for fade-to-black (0–255, lower = more sensitive) |
+| `-v, --verbose` | off | Enable debug logging |
+| `--check-deps` | — | Verify all dependencies and exit |
+| `--version` | — | Show version number |
 
 ### Quality Guidelines
 
-**CRF values**: 0 = lossless, 18-23 = visually lossless for DVD, 28 = acceptable, 51 = worst
+**CRF values** for H.265 with DVD source material:
 
-**Presets**:
-- **Slow**: Highest quality, slowest (recommended for archival)
-- **Medium**: Balanced quality and speed
-- **Fast**: Lower quality, fastest
+- **16–18**: Visually lossless. Recommended for archival. Files will be larger.
+- **19–22**: Excellent quality with smaller files. Good default range.
+- **23–28**: Noticeable quality loss on close inspection. Fine for casual viewing.
+
+**QTGMC presets**:
+
+- **Slow**: Best quality. Uses more reference frames and finer motion estimation. Recommended.
+- **Medium**: Balanced. Good quality with reasonable encoding time.
+- **Fast**: Fastest processing. Still significantly better than basic bob deinterlacing.
+
+## Technical Details
+
+### Pipeline Architecture
+
+```
+ISO File
+  │
+  ▼
+┌─────────────────────────────────┐
+│  Stage 1: EXTRACT               │
+│  Mount ISO → ffprobe titles     │
+│  → extract chapters (MPEG-2)    │
+│  → grab menu video & images     │
+│  → skip titles < 60s            │
+└─────────────┬───────────────────┘
+              │
+              ▼
+┌─────────────────────────────────┐
+│  Stage 2: DETECT                │
+│  PySceneDetect ThresholdDetector│
+│  → find fade-to-black points    │
+│  → group chapters into scenes   │
+│  → output scene_map.json        │
+└─────────────┬───────────────────┘
+              │
+              ▼
+┌─────────────────────────────────┐
+│  Stage 3: ENCODE                │
+│  Concatenate chapters per scene │
+│  → VapourSynth + QTGMC         │
+│    (480i → 59.94fps progressive)│
+│  → FFmpeg H.265 CRF 18         │
+│  → AC3 audio → AAC             │
+│  → Extract subtitles to .srt   │
+└─────────────┬───────────────────┘
+              │
+              ▼
+┌─────────────────────────────────┐
+│  Stage 4: ORGANIZE              │
+│  Structure output folder        │
+│  → scene MP4s, menu, images     │
+│  → scene_map.json, process.log  │
+│  → clean up temp files          │
+└─────────────────────────────────┘
+```
+
+### Module Overview
+
+| Module | Lines | Purpose |
+|---|---|---|
+| `extractor.py` | 618 | ISO mounting (macOS/Windows/Linux), DVD parsing, chapter extraction |
+| `encoder.py` | 574 | VapourSynth + QTGMC deinterlacing, H.265 encoding, audio/subtitle handling |
+| `gui.py` | 541 | tkinter drag-and-drop GUI with progress tracking and logging |
+| `pipeline.py` | 479 | 4-stage orchestrator with threading, cancellation, and callbacks |
+| `detector.py` | 388 | PySceneDetect scene detection with threshold and content fallback |
+| `deps.py` | 250 | Dependency verification with per-platform install instructions |
+| `cli.py` | 198 | argparse CLI entry point, progress display |
+
+### Cross-Platform ISO Mounting
+
+| Platform | Method |
+|---|---|
+| macOS | `hdiutil attach -nobrowse` |
+| Linux | `mount -o loop` (requires sudo or fuse) |
+| Windows | `PowerShell Mount-DiskImage` |
+
+### Telecine Detection
+
+Some DVD content is 24fps film that was telecined (3:2 pulldown) to 29.97i. The tool detects this via field-matching analysis and warns in the UI. By default it still uses QTGMC since the primary use case is video-native content, but the warning helps users identify film-based discs that might benefit from inverse telecine (IVTC) instead.
+
+## Edge Cases
+
+| Situation | Behavior |
+|---|---|
+| Titles under 60 seconds | Auto-skipped (FBI warnings, logos) |
+| No scenes detected (no fades) | Entire title output as single file |
+| Corrupt chapters | Skipped with error logged, remaining content continues |
+| Telecine detected | Warning shown, QTGMC still applied by default |
+| No images on disc | `images/` folder not created |
+| Menu has no video | Skipped silently, logged |
+| Multi-angle DVDs | Default angle processed |
+| Already progressive content | QTGMC handles gracefully |
+
+## Development
+
+```bash
+git clone https://github.com/ilovep4k/dvd-to-mp4.git
+cd dvd-to-mp4
+python3 -m venv venv
+source venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+### Project Structure
+
+```
+dvd-to-mp4/
+├── pyproject.toml
+├── README.md
+├── LICENSE
+├── .gitignore
+├── docs/plans/
+│   ├── 2026-03-08-dvd-to-mp4-design.md
+│   └── 2026-03-08-dvd-to-mp4-implementation.md
+├── src/dvd2mp4/
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── cli.py
+│   ├── deps.py
+│   ├── detector.py
+│   ├── encoder.py
+│   ├── extractor.py
+│   ├── gui.py
+│   └── pipeline.py
+└── tests/
+```
 
 ## License
 
-MIT License. See LICENSE file for details.
+MIT License. See [LICENSE](LICENSE) for details.
+
+## Acknowledgments
+
+- [QTGMC / havsfunc](https://github.com/HomeOfVapourSynthEvolution/havsfunc) — Motion-compensated deinterlacing
+- [VapourSynth](http://www.vapoursynth.com/) — Frame-level video processing
+- [FFmpeg](https://ffmpeg.org/) — Video extraction and encoding
+- [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) — Scene boundary detection
