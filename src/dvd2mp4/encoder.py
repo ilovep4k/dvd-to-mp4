@@ -295,6 +295,9 @@ def _run_encoding_pipeline(
     ]
 
     try:
+        vspipe_process = None
+        ffmpeg_process = None
+
         # Start vspipe process
         vspipe_process = subprocess.Popen(
             vspipe_cmd,
@@ -339,12 +342,15 @@ def _run_encoding_pipeline(
         logger.info(f"Encoding completed successfully: {output_path}")
 
     except subprocess.TimeoutExpired:
-        vspipe_process.terminate()
-        ffmpeg_process.terminate()
+        if vspipe_process: vspipe_process.terminate()
+        if ffmpeg_process: ffmpeg_process.terminate()
         raise RuntimeError("Encoding pipeline timed out")
     except Exception as e:
-        vspipe_process.terminate()
-        ffmpeg_process.terminate()
+        # Ensure processes are terminated even if they failed to start
+        if vspipe_process and vspipe_process.poll() is None:
+            vspipe_process.terminate()
+        if ffmpeg_process and ffmpeg_process.poll() is None:
+            ffmpeg_process.terminate()
         raise RuntimeError(f"Encoding pipeline error: {e}")
 
 
@@ -382,15 +388,15 @@ def extract_subtitles(video_path: Path, output_dir: Path) -> list[Path]:
 
         subtitle_lines = result.stdout.strip().split('\n')
 
-        for line in subtitle_lines:
+        for subtitle_idx, line in enumerate(subtitle_lines):
             if not line:
                 continue
 
             parts = line.split(',')
             if len(parts) >= 2:
-                stream_index = parts[0]
+                # stream_index = parts[0] # This is the absolute stream index
                 codec_name = parts[1]
-
+                
                 # Determine output format based on codec
                 if codec_name in ['subrip', 'srt']:
                     ext = '.srt'
@@ -401,12 +407,12 @@ def extract_subtitles(video_path: Path, output_dir: Path) -> list[Path]:
                 else:
                     ext = '.srt'
 
-                output_path = output_dir / f"subtitle_{stream_index}{ext}"
+                output_path = output_dir / f"subtitle_{subtitle_idx}{ext}"
 
                 cmd = [
                     "ffmpeg",
                     "-i", str(video_path),
-                    "-map", f"0:s:{stream_index}",
+                    "-map", f"0:s:{subtitle_idx}",
                     "-y",
                     str(output_path),
                 ]
@@ -420,9 +426,9 @@ def extract_subtitles(video_path: Path, output_dir: Path) -> list[Path]:
 
                 if result.returncode == 0:
                     extracted_files.append(output_path)
-                    logger.info(f"Extracted subtitle stream {stream_index} to {output_path}")
+                    logger.info(f"Extracted subtitle stream {subtitle_idx} to {output_path}")
                 else:
-                    logger.warning(f"Failed to extract subtitle stream {stream_index}")
+                    logger.warning(f"Failed to extract subtitle stream {subtitle_idx}: {result.stderr}")
 
     except subprocess.TimeoutExpired:
         logger.error("Subtitle extraction timed out")

@@ -26,47 +26,35 @@ from dvd2mp4.pipeline import ConversionPipeline, PipelineConfig, PipelineCallbac
 from dvd2mp4 import deps
 
 
-class PipelineCallback(PipelineCallbacks):
+class GUIPipelineCallbacks(PipelineCallbacks):
     """Callbacks for pipeline events, posting to thread-safe queue."""
 
     def __init__(self, queue: queue.Queue):
+        super().__init__(
+            on_stage_change=self.on_stage_change,
+            on_progress=self.on_progress,
+            on_warning=self.on_warning,
+            on_error=self.on_error,
+            on_complete=self.on_complete,
+        )
         self.queue = queue
 
-    def on_extract_start(self) -> None:
-        self.queue.put(("stage_change", "extract"))
+    def on_stage_change(self, stage_name: str, stage_num: int, total_stages: int) -> None:
+        self.queue.put(("stage_change", (stage_name, stage_num, total_stages)))
 
-    def on_extract_progress(self, current: int, total: int) -> None:
-        self.queue.put(("progress", ("extract", current, total)))
+    def on_progress(self, stage: str, current: int, total: int, message: str) -> None:
+        self.queue.put(("progress", (stage, current, total, message)))
 
-    def on_extract_complete(self) -> None:
-        self.queue.put(("log", "Extraction complete"))
-
-    def on_detect_start(self) -> None:
-        self.queue.put(("stage_change", "detect"))
-
-    def on_detect_complete(self, video_info: dict) -> None:
-        self.queue.put(("log", f"Detection complete: {video_info}"))
-
-    def on_encode_start(self) -> None:
-        self.queue.put(("stage_change", "encode"))
-
-    def on_encode_progress(self, current: int, total: int) -> None:
-        self.queue.put(("progress", ("encode", current, total)))
-
-    def on_encode_complete(self) -> None:
-        self.queue.put(("log", "Encoding complete"))
-
-    def on_organize_start(self) -> None:
-        self.queue.put(("stage_change", "organize"))
-
-    def on_organize_complete(self) -> None:
-        self.queue.put(("log", "Organization complete"))
+    def on_complete(self, output_dir: Path, scene_files: list[Path]) -> None:
+        self.queue.put(("completion", (True, output_dir)))
 
     def on_warning(self, message: str) -> None:
         self.queue.put(("warning", message))
 
-    def on_error(self, message: str) -> None:
-        self.queue.put(("error", message))
+    def on_error(self, message: str, recoverable: bool) -> None:
+        # Only fatal errors from the pipeline should trigger a UI error popup
+        if not recoverable:
+            self.queue.put(("error", message))
 
     def on_log(self, message: str) -> None:
         self.queue.put(("log", message))
@@ -106,12 +94,13 @@ class DVD2MP4App:
     def _check_dependencies(self) -> None:
         """Check for critical dependencies on startup."""
         try:
-            missing = deps.check_all()
-            if missing:
+            result = deps.check_all()
+            if not result.all_ok:
+                missing_deps = [f"  • {dep.name} ({'required' if dep.required else 'optional'})" for dep in result.missing]
                 warning_msg = (
                     "Some dependencies are missing:\n\n"
-                    + "\n".join(f"  • {dep}" for dep in missing)
-                    + "\n\nPlease install them and restart the app."
+                    + "\n".join(missing_deps)
+                    + "\n\nPlease install them and restart the app. You can run with --check-deps for details."
                 )
                 messagebox.showwarning("Missing Dependencies", warning_msg)
         except Exception as e:
@@ -393,14 +382,16 @@ class DVD2MP4App:
         self._hide_warning()
 
         # Create pipeline config
-        config = PipelineConfig(
-            iso_path=self.iso_file,
-            output_dir=self.output_folder,
-        )
+        config = PipelineConfig()
 
         # Create pipeline with callbacks
-        callbacks = PipelineCallback(self.queue)
-        self.pipeline = ConversionPipeline(config, callbacks)
+        callbacks = GUIPipelineCallbacks(self.queue)
+        self.pipeline = ConversionPipeline(
+            iso_path=self.iso_file,
+            output_dir=self.output_folder,
+            config=config,
+            callbacks=callbacks,
+        )
 
         # Start conversion in separate thread
         self.conversion_thread = threading.Thread(target=self._conversion_worker, daemon=True)
@@ -410,20 +401,21 @@ class DVD2MP4App:
         """Worker thread for running the conversion pipeline."""
         try:
             self.pipeline.run()
-            self.queue.put(("completion", True))
+            # on_complete callback will handle success
         except Exception as e:
-            self.queue.put(("completion", False))
-            self.queue.put(("error", str(e)))
+            # on_error callback will handle this
+            self.queue.put(("completion", (False, None)))
 
     def _cancel_conversion(self) -> None:
         """Cancel the ongoing conversion."""
         if self.pipeline:
-            self.pipeline.cancel()
+            self.pipeline.request_cancel()
             self.queue.put(("log", "Conversion cancelled"))
             self._reset_controls()
 
     def _process_queue(self) -> None:
         """Process messages from the pipeline queue (thread-safe)."""
+        # pylint: disable=too-many-nested-blocks
         try:
             while True:
                 msg_type, data = self.queue.get_nowait()
@@ -431,10 +423,11 @@ class DVD2MP4App:
                 if msg_type == "stage_change":
                     self._update_stage(data)
                 elif msg_type == "progress":
-                    stage, current, total = data
+                    stage, current, total, message = data
                     progress = (current / total * 100) if total > 0 else 0
                     self.progress_var.set(progress)
-                    self.status_label.config(text=f"{stage.capitalize()}: {current}/{total}")
+                    status_text = f"{stage.capitalize()}: {message} ({current}/{total})"
+                    self.status_label.config(text=status_text)
                 elif msg_type == "log":
                     self._append_log(data)
                 elif msg_type == "warning":
@@ -456,13 +449,14 @@ class DVD2MP4App:
         Args:
             stage: The current stage (extract, detect, encode, organize)
         """
+        stage_key = stage.lower()
         # Reset all stages to normal
         for stage_label in self.stage_indicators.values():
             stage_label.config(bg="#e0e0e0", fg="#333333", relief=tk.RAISED)
 
         # Highlight current stage
-        if stage in self.stage_indicators:
-            self.stage_indicators[stage].config(bg="#4CAF50", fg="white", relief=tk.SUNKEN)
+        if stage_key in self.stage_indicators:
+            self.stage_indicators[stage_key].config(bg="#4CAF50", fg="white", relief=tk.SUNKEN)
 
     def _reset_stages(self) -> None:
         """Reset all stage indicators to normal state."""
@@ -499,18 +493,19 @@ class DVD2MP4App:
         """Hide the warning banner."""
         self.warning_frame.pack_forget()
 
-    def _on_completion(self, success: bool) -> None:
+    def _on_completion(self, data: tuple) -> None:
         """Handle conversion completion.
 
         Args:
-            success: Whether the conversion was successful
+            data: Tuple of (success, output_dir)
         """
+        success, output_dir = data
         self._reset_controls()
 
         if success:
             messagebox.showinfo(
                 "Conversion Complete",
-                f"Conversion completed successfully!\n\nOutput folder:\n{self.output_folder}",
+                f"Conversion completed successfully!\n\nOutput folder:\n{output_dir}",
             )
             self.progress_var.set(100)
             self.status_label.config(text="Conversion complete!")

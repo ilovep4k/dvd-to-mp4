@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from dvd2mp4 import __version__
-from dvd2mp4.deps import check_and_report, ensure_deps
+from dvd2mp4.deps import check_all, check_and_report, ensure_deps
 from dvd2mp4.pipeline import ConversionPipeline, PipelineConfig, PipelineCallbacks
 
 
@@ -28,28 +28,32 @@ logger = logging.getLogger(__name__)
 class CLICallbacks(PipelineCallbacks):
     """Callbacks for CLI progress reporting."""
 
-    def on_stage_start(self, stage_name: str) -> None:
-        """Print stage start message."""
-        print(f"\n[*] {stage_name}...")
+    def on_stage_change(self, stage_name: str, stage_num: int, total_stages: int) -> None:
+        """Print stage change message."""
+        print(f"\n[{stage_num}/{total_stages}] {stage_name}...")
 
-    def on_stage_complete(self, stage_name: str, duration: float) -> None:
-        """Print stage completion."""
-        print(f"[✓] {stage_name} completed in {duration:.1f}s")
-
-    def on_progress(self, current: int, total: int) -> None:
+    def on_progress(self, stage: str, current: int, total: int, message: str) -> None:
         """Print simple text progress indicator."""
         if total > 0:
             percent = (current / total) * 100
             bar_length = 40
             filled = int(bar_length * current / total)
             bar = "█" * filled + "░" * (bar_length - filled)
-            print(f"\r[{bar}] {percent:.0f}% ({current}/{total})", end="", flush=True)
+            print(f"\r  [{bar}] {percent:.0f}% ({current}/{total}) {message}", end="", flush=True)
+            if current == total:
+                print()  # Newline on completion
+
+    def on_complete(self, output_dir: Path, scene_files: list[Path]) -> None:
+        print(f"\n\n[✓] Conversion complete!")
+        print(f"  Output directory: {output_dir}")
+        if scene_files:
+            print(f"  Encoded files: {len(scene_files)}")
 
     def on_warning(self, message: str) -> None:
         """Print warning message."""
         print(f"\n[!] WARNING: {message}")
 
-    def on_error(self, message: str) -> None:
+    def on_error(self, message: str, recoverable: bool) -> None:
         """Print error message."""
         print(f"\n[✗] ERROR: {message}")
 
@@ -72,30 +76,19 @@ def _run_cli(args) -> int:
 
     # Create pipeline config
     config = PipelineConfig(
-        iso_path=iso_path,
-        output_dir=output_dir,
         crf=args.crf,
         preset=args.preset,
-        threshold=args.threshold,
+        scene_threshold=args.threshold,
     )
 
     # Run conversion
     try:
         callbacks = CLICallbacks()
-        pipeline = ConversionPipeline(config, callbacks=callbacks)
-        result = pipeline.run()
-
-        if result.success:
-            print(f"\n\n[✓] Conversion complete!")
-            print(f"  Output directory: {result.output_dir}")
-            if result.output_files:
-                print(f"  Output files:")
-                for file_path in result.output_files:
-                    print(f"    - {file_path}")
-            return 0
-        else:
-            logger.error(f"Conversion failed: {result.error_message}")
-            return 1
+        pipeline = ConversionPipeline(
+            iso_path=iso_path, output_dir=output_dir, config=config, callbacks=callbacks
+        )
+        pipeline.run()
+        return 0
 
     except KeyboardInterrupt:
         print("\n\n[✗] Conversion cancelled by user")
@@ -139,7 +132,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--threshold",
-        type=float,
+        type=int,
         default=12,
         help="PySceneDetect threshold (default: 12)",
     )
@@ -168,8 +161,9 @@ def main() -> None:
 
     # Handle --check-deps flag
     if args.check_deps:
-        check_and_report()
-        sys.exit(0)
+        from dvd2mp4.deps import check_all
+        print(check_and_report())
+        sys.exit(0 if check_all().all_ok else 1)
 
     # If no ISO path provided, launch GUI
     if not args.iso_path:
@@ -178,7 +172,7 @@ def main() -> None:
 
             launch_gui()
         except ImportError:
-            logger.error("GUI mode requires PyQt6. Install with: pip install dvd2mp4[gui]")
+            logger.error("GUI mode requires tkinterdnd2. Install with: pip install tkinterdnd2")
             sys.exit(1)
     else:
         # Run CLI mode
@@ -192,7 +186,7 @@ def main_gui() -> None:
 
         launch_gui()
     except ImportError:
-        logger.error("GUI mode requires PyQt6. Install with: pip install dvd2mp4[gui]")
+        logger.error("GUI mode requires tkinterdnd2. Install with: pip install tkinterdnd2")
         sys.exit(1)
 
 

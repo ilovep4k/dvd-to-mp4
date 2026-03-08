@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
@@ -18,6 +20,7 @@ from scenedetect import detect, open_video
 from scenedetect.detectors import ContentDetector, ThresholdDetector
 
 from .extractor import TitleInfo
+from .encoder import _concatenate_chapters
 
 logger = logging.getLogger(__name__)
 
@@ -95,35 +98,38 @@ def _get_chapter_duration(chapter_path: Path) -> float:
         return 0.0
 
 
-def _detect_scenes_threshold(
-    title: TitleInfo, threshold: int = 12, min_scene_len: int = 90
+@contextmanager
+def _temp_concat_video(chapters: list[Path], work_dir: Path) -> Path:
+    """Context manager to create a temporary concatenated video from chapters."""
+    concat_video = work_dir / f"temp_concat_{Path(tempfile.mktemp()).stem}.mpg"
+    try:
+        _concatenate_chapters(chapters, concat_video)
+        yield concat_video
+    finally:
+        concat_video.unlink(missing_ok=True)
+
+
+def _detect_scenes_from_video(
+    video_path: Path, threshold: int = 12, min_scene_len: int = 90
 ) -> list[tuple[float, float]]:
     """Detect scene boundaries using ThresholdDetector (fade-to-black).
 
     Args:
-        title: TitleInfo object with chapters list
+        video_path: Path to the video file to analyze.
         threshold: Threshold for fade detection (0-255, lower = more sensitive)
         min_scene_len: Minimum scene length in frames
 
     Returns:
         List of (start_time, end_time) tuples in seconds, or empty list if detection fails
     """
-    if not title.chapters:
-        logger.warning(f"Title {title.title_num} has no chapters")
-        return []
-
-    # For multiple chapters, we need to process them sequentially and track cumulative time
-    # PySceneDetect's detect() function works best with a single file
-    # So we'll process the first chapter as a representative sample
-    first_chapter = title.chapters[0]
-
     try:
         logger.info(
-            f"Running ThresholdDetector on {first_chapter} (threshold={threshold})"
+            f"Running ThresholdDetector on {video_path.name} (threshold={threshold})"
         )
         scene_list = detect(
-            str(first_chapter),
+            str(video_path),
             ThresholdDetector(threshold=threshold, min_scene_len=min_scene_len),
+            show_progress=False,
         )
 
         # Convert scenedetect Timecode objects to seconds
@@ -136,47 +142,25 @@ def _detect_scenes_threshold(
 
         logger.info(f"Detected {len(scenes)} scenes via ThresholdDetector")
         return scenes
-
     except Exception as e:
         logger.warning(f"ThresholdDetector failed: {e}")
-        return []
 
-
-def _detect_scenes_content(
-    title: TitleInfo, threshold: float = 27.0, min_scene_len: int = 90
-) -> list[tuple[float, float]]:
-    """Detect scene boundaries using ContentDetector (fallback).
-
-    Args:
-        title: TitleInfo object with chapters list
-        threshold: Threshold for content-based detection (lower = more sensitive)
-        min_scene_len: Minimum scene length in frames
-
-    Returns:
-        List of (start_time, end_time) tuples in seconds
-    """
-    if not title.chapters:
-        logger.warning(f"Title {title.title_num} has no chapters")
-        return []
-
-    first_chapter = title.chapters[0]
-
+    # Fallback to ContentDetector
     try:
-        logger.info(f"Running ContentDetector on {first_chapter} (threshold={threshold})")
+        logger.info(f"Falling back to ContentDetector on {video_path.name}")
         scene_list = detect(
-            str(first_chapter),
-            ContentDetector(threshold=threshold, min_scene_len=min_scene_len),
+            str(video_path),
+            ContentDetector(threshold=27.0, min_scene_len=min_scene_len),
+            show_progress=False,
         )
-
         scenes = []
         for scene in scene_list:
             start_sec = scene[0].get_seconds()
             end_sec = scene[1].get_seconds()
             scenes.append((start_sec, end_sec))
 
-        logger.info(f"Detected {len(scenes)} scenes via ContentDetector")
+        logger.info(f"Detected {len(scenes)} scenes via fallback ContentDetector")
         return scenes
-
     except Exception as e:
         logger.warning(f"ContentDetector failed: {e}")
         return []
@@ -286,16 +270,12 @@ def detect_scenes(
     if progress_cb:
         progress_cb("detecting_scenes", 0, 100)
 
-    # Try threshold detection first (fade-to-black)
-    fade_times = _detect_scenes_threshold(title, threshold=threshold)
-
-    # Fall back to content detection if threshold didn't work
-    if not fade_times:
-        logger.info("Threshold detection found no scenes, trying content detection")
-        fade_times = _detect_scenes_content(title)
-
-    # Map detected fades to chapter groups
-    scene_groups = _map_fades_to_chapters(fade_times, title.chapters)
+    # Concatenate chapters to a temporary file to run detection on the whole title
+    title_work_dir = work_dir / f"title_{title.title_num:02d}_detect"
+    title_work_dir.mkdir(parents=True, exist_ok=True)
+    with _temp_concat_video(title.chapters, title_work_dir) as concat_video:
+        fade_times = _detect_scenes_from_video(concat_video, threshold=threshold)
+        scene_groups = _map_fades_to_chapters(fade_times, title.chapters)
 
     # Build SceneInfo objects
     scenes = []
@@ -323,11 +303,10 @@ def detect_scenes(
     scene_map = SceneMap(title_num=title.title_num, scenes=scenes)
 
     # Save to JSON
-    work_dir = Path(work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
-    scene_map_path = work_dir / "scene_map.json"
+    scene_map_path = title_work_dir / f"scene_map_title_{title.title_num:02d}.json"
 
     try:
+        scene_map_path.parent.mkdir(parents=True, exist_ok=True)
         with open(scene_map_path, "w") as f:
             json.dump(scene_map.to_dict(), f, indent=2)
         logger.info(f"Saved scene map to {scene_map_path}")
@@ -376,7 +355,9 @@ def detect_all_scenes(
             progress_cb("detecting_scenes", idx, len(titles))
 
         try:
-            scene_map = detect_scenes(title, work_dir, threshold=threshold)
+            # Each title gets its own detection subdirectory within the main work_dir
+            title_detect_work_dir = work_dir / "scenedetect"
+            scene_map = detect_scenes(title, title_detect_work_dir, threshold=threshold)
             scene_maps[title.title_num] = scene_map
         except ValueError as e:
             logger.error(f"Failed to detect scenes for title {title.title_num}: {e}")

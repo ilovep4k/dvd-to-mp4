@@ -12,6 +12,7 @@ import platform
 import shutil
 import subprocess
 import tempfile
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional
@@ -57,6 +58,7 @@ class DVDExtractor:
         """
         self.progress_cb = progress_cb
         self._mounted_path: Optional[Path] = None
+        self._iso_path: Optional[Path] = None
 
     def _report_progress(self, stage: str, current: int, total: int) -> None:
         """Report progress if callback is set."""
@@ -113,6 +115,7 @@ class DVDExtractor:
                     subprocess.run(cmd, check=True, timeout=self.MOUNT_TIMEOUT, capture_output=True)
 
             self._mounted_path = mount_point
+            self._iso_path = iso_path
             logger.info(f"Successfully mounted ISO at {mount_point}")
 
         except subprocess.TimeoutExpired:
@@ -134,8 +137,8 @@ class DVDExtractor:
                 subprocess.run(cmd, check=True, timeout=self.MOUNT_TIMEOUT, capture_output=True)
 
             elif system == "Windows":
-                # Get the disk image path and dismount
-                ps_cmd = f'Dismount-DiskImage -ImagePath "{self._mounted_path}" -Confirm:$false'
+                # Dismount using the original ISO path
+                ps_cmd = f'Dismount-DiskImage -ImagePath "{self._iso_path}" -Confirm:$false'
                 subprocess.run(["powershell", "-Command", ps_cmd], timeout=self.MOUNT_TIMEOUT, capture_output=True)
 
             else:  # Linux
@@ -152,143 +155,115 @@ class DVDExtractor:
         except Exception as e:
             logger.warning(f"Error unmounting ISO: {e}")
 
-    def _find_vob_files(self, mount_point: Path) -> list[Path]:
-        """Find VIDEO_TS.VOB files in mounted DVD.
+    @contextmanager
+    def _title_vob_concat_list(self, vob_files: list[Path]) -> Optional[Path]:
+        """Create a temporary FFmpeg concat demuxer list for a title's VOBs.
 
         Args:
-            mount_point: Path to mounted DVD
+            vob_files: List of VOB file paths for a single title.
 
         Returns:
-            List of VOB file paths sorted by title number
+            Yields the path to the temporary concat list file.
         """
-        vob_files = []
+        if not vob_files:
+            yield None
+            return
 
-        # Look for VIDEO_TS directory
-        video_ts_dir = mount_point / "VIDEO_TS"
-        if not video_ts_dir.exists():
-            logger.warning(f"No VIDEO_TS directory found in {mount_point}")
-            return vob_files
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".txt", delete=False, encoding="utf-8"
+        ) as concat_file:
+            for vob_path in sorted(vob_files):
+                concat_file.write(f"file '{vob_path.resolve()}'\n")
+            concat_file_path = Path(concat_file.name)
 
-        # Find all VTS_*.VOB files (title VOB files)
-        for vob_file in sorted(video_ts_dir.glob("VTS_*.VOB")):
-            # Match VTS_01_1.VOB, VTS_01_2.VOB, etc. (skip menu which is VTS_00)
-            match = re.match(r"VTS_(\d+)_(\d+)\.VOB", vob_file.name, re.IGNORECASE)
-            if match:
-                title_num = int(match.group(1))
-                if title_num > 0:  # Skip menu domain (00)
-                    vob_files.append(vob_file)
+        try:
+            yield concat_file_path
+        finally:
+            concat_file_path.unlink(missing_ok=True)
 
-        logger.info(f"Found {len(vob_files)} VOB files")
-        return vob_files
+    def _run_ffprobe(self, cmd: list[str]) -> dict:
+        """Run an ffprobe command and return JSON output."""
+        try:
+            result = subprocess.run(
+                cmd, check=True, timeout=self.FFPROBE_TIMEOUT, capture_output=True, text=True
+            )
+            return json.loads(result.stdout)
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError) as e:
+            logger.warning(f"ffprobe command failed: {' '.join(cmd)}. Error: {e}")
+            return {}
 
-    def _probe_title(self, vob_path: Path) -> dict:
+    def _probe_title(self, concat_list_path: Path) -> dict:
         """Use ffprobe to analyze a title's properties.
 
         Args:
-            vob_path: Path to VOB file
+            concat_list_path: Path to a concat list file for the title's VOBs.
 
         Returns:
             Dictionary with title information
         """
         cmd = [
             "ffprobe",
-            "-analyzeduration", "100M",
-            "-probesize", "100M",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list_path),
             "-print_format", "json",
             "-show_format",
             "-show_entries", "stream=duration,codec_type,codec_name,width,height,r_frame_rate,field_order",
-            "-show_entries", "format=duration",
-            str(vob_path)
         ]
+        data = self._run_ffprobe(cmd)
 
-        try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                timeout=self.FFPROBE_TIMEOUT,
-                capture_output=True,
-                text=True
-            )
-            data = json.loads(result.stdout)
+        video_info = {}
+        for stream in data.get("streams", []):
+            if stream.get("codec_type") == "video":
+                video_info = {
+                    "codec": stream.get("codec_name"),
+                    "width": stream.get("width"),
+                    "height": stream.get("height"),
+                    "r_frame_rate": stream.get("r_frame_rate"),
+                    "field_order": stream.get("field_order", "unknown"),
+                    "duration": stream.get("duration"),
+                }
+                break
 
-            # Extract video stream info
-            video_info = {}
-            for stream in data.get("streams", []):
-                if stream.get("codec_type") == "video":
-                    video_info = {
-                        "codec": stream.get("codec_name"),
-                        "width": stream.get("width"),
-                        "height": stream.get("height"),
-                        "r_frame_rate": stream.get("r_frame_rate"),
-                        "field_order": stream.get("field_order", "unknown"),
-                        "duration": stream.get("duration")
-                    }
-                    break
+        duration = float(data.get("format", {}).get("duration", 0.0))
 
-            # Get duration from format or stream
-            duration = None
-            if "format" in data and "duration" in data["format"]:
-                duration = float(data["format"]["duration"])
-            elif video_info.get("duration"):
-                duration = float(video_info["duration"])
+        return {"duration": duration, "video_info": video_info}
 
-            return {
-                "duration": duration or 0,
-                "video_info": video_info
-            }
-
-        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError) as e:
-            logger.warning(f"Failed to probe {vob_path}: {e}")
-            return {"duration": 0, "video_info": {}}
-
-    def _detect_telecine(self, vob_path: Path) -> bool:
+    def _detect_telecine(self, concat_list_path: Path) -> bool:
         """Detect if content appears to be telecined using ffmpeg idet filter.
 
         Args:
-            vob_path: Path to VOB file (first chapter)
+            concat_list_path: Path to a concat list file for the title's VOBs.
 
         Returns:
             True if telecine detected
         """
         cmd = [
             "ffmpeg",
-            "-analyzeduration", "100M",
-            "-probesize", "100M",
-            "-i", str(vob_path),
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list_path),
             "-vf", "idet=half_life=0",
             "-t", "60",  # Analyze first 60 seconds
             "-f", "null",
-            "-"
+            "-",
         ]
 
         try:
             result = subprocess.run(
-                cmd,
-                check=False,
-                timeout=self.FFMPEG_TIMEOUT,
-                capture_output=True,
-                text=True
+                cmd, check=False, timeout=60, capture_output=True, text=True, stderr=subprocess.PIPE
             )
-
-            # Look for idet output in stderr
             output = result.stderr
 
-            # Check for telecine indicators
-            if "Telecine" in output:
-                logger.info("Telecine detected")
-                return True
-
-            # Look for TFF/BFF patterns that suggest interlacing
             tff_match = re.search(r"TFF:\s*(\d+)", output)
             bff_match = re.search(r"BFF:\s*(\d+)", output)
+            tff_count = int(tff_match.group(1)) if tff_match else 0
+            bff_count = int(bff_match.group(1)) if bff_match else 0
 
-            if tff_match and int(tff_match.group(1)) > 10:
-                logger.info("Interlaced content detected (TFF)")
+            # Telecine is often detected as a mix of progressive and interlaced frames
+            if "Telecine" in output or (tff_count > 10 and bff_count > 10):
+                logger.info(f"Telecine/interlaced content detected for title.")
                 return True
-            if bff_match and int(bff_match.group(1)) > 10:
-                logger.info("Interlaced content detected (BFF)")
-                return True
-
             return False
 
         except subprocess.TimeoutExpired:
@@ -298,84 +273,59 @@ class DVDExtractor:
             logger.warning(f"Error detecting telecine: {e}")
             return False
 
-    def _get_chapters_from_vob(self, vob_path: Path) -> list[dict]:
+    def _get_chapters_from_title(self, concat_list_path: Path) -> list[dict]:
         """Parse chapter information from VOB file using ffprobe.
 
         Args:
-            vob_path: Path to VOB file
+            concat_list_path: Path to a concat list file for the title's VOBs.
 
         Returns:
             List of chapter information dicts
         """
         cmd = [
             "ffprobe",
-            "-analyzeduration", "100M",
-            "-probesize", "100M",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list_path),
             "-print_format", "json",
             "-show_chapters",
-            str(vob_path)
         ]
+        data = self._run_ffprobe(cmd)
+        return data.get("chapters", [])
 
-        try:
-            result = subprocess.run(
-                cmd,
-                check=True,
-                timeout=self.FFPROBE_TIMEOUT,
-                capture_output=True,
-                text=True
-            )
-            data = json.loads(result.stdout)
-            chapters = data.get("chapters", [])
-
-            if not chapters:
-                # If no chapters found, estimate based on typical DVD chapter length
-                probe_info = self._probe_title(vob_path)
-                duration = probe_info.get("duration", 0)
-                if duration > 0:
-                    # Estimate ~5 minute chapters
-                    num_chapters = max(1, int(duration / 300))
-                    chapters = [
-                        {
-                            "id": i,
-                            "start_time": i * (duration / num_chapters),
-                            "end_time": (i + 1) * (duration / num_chapters),
-                            "tags": {"title": f"Chapter {i+1}"}
-                        }
-                        for i in range(num_chapters)
-                    ]
-
-            return chapters
-
-        except Exception as e:
-            logger.warning(f"Failed to get chapters from {vob_path}: {e}")
-            return []
-
-    def _extract_chapter(self, vob_path: Path, chapter_idx: int, output_path: Path) -> bool:
+    def _extract_chapter(
+        self, concat_list_path: Path, chapter_info: dict, output_path: Path
+    ) -> bool:
         """Extract a single chapter from VOB file.
 
         Args:
-            vob_path: Path to VOB file
-            chapter_idx: Chapter index (0-based)
+            concat_list_path: Path to a concat list file for the title's VOBs.
+            chapter_info: Dictionary for the chapter from ffprobe.
             output_path: Output path for chapter file
 
         Returns:
             True if successful
         """
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        start_time = chapter_info["start_time"]
+        end_time = chapter_info["end_time"]
+        duration = float(end_time) - float(start_time)
 
         try:
             # Use ffmpeg to extract raw MPEG-2 stream
-            # Chapter extraction relies on chapter metadata if available
             cmd = [
                 "ffmpeg",
-                "-analyzeduration", "100M",
-                "-probesize", "100M",
-                "-i", str(vob_path),
+                "-f", "concat",
+                "-safe", "0",
+                "-i", str(concat_list_path),
+                "-ss", str(start_time),
+                "-t", str(duration),
                 "-c:v", "copy",
                 "-c:a", "copy",
                 "-map", "0",
                 "-f", "mpeg",
-                str(output_path)
+                "-y",
+                str(output_path),
             ]
 
             subprocess.run(
@@ -507,16 +457,16 @@ class DVDExtractor:
                 self._report_progress("mounting", 0, 100)
                 self._mount_iso(iso_path, mount_point)
 
-                # Find titles
+                # Find all title VOB files
                 self._report_progress("scanning", 0, 100)
-                vob_files = self._find_vob_files(mount_point)
-
-                if not vob_files:
-                    raise RuntimeError("No titles found in DVD")
+                video_ts_dir = mount_point / "VIDEO_TS"
+                if not video_ts_dir.is_dir():
+                    raise RuntimeError(f"VIDEO_TS directory not found in {mount_point}")
+                all_vob_files = sorted(video_ts_dir.glob("VTS_[0-9][0-9]_[0-9].VOB"))
 
                 # Group VOB files by title
                 titles_dict = {}
-                for vob_file in vob_files:
+                for vob_file in all_vob_files:
                     match = re.match(r"VTS_(\d+)_", vob_file.name, re.IGNORECASE)
                     if match:
                         title_num = int(match.group(1))
@@ -524,41 +474,47 @@ class DVDExtractor:
                             titles_dict[title_num] = []
                         titles_dict[title_num].append(vob_file)
 
+                if not titles_dict:
+                    raise RuntimeError("No VOB titles found in DVD")
+
                 # Extract titles
                 titles = []
                 title_list = sorted(titles_dict.keys())
 
                 for idx, title_num in enumerate(title_list):
-                    self._report_progress("probing_titles", idx, len(title_list))
-
-                    vob_files_for_title = titles_dict[title_num]
-                    first_vob = vob_files_for_title[0]
-
-                    # Probe title
-                    probe_info = self._probe_title(first_vob)
-                    duration = probe_info.get("duration", 0)
-
-                    # Skip very short titles (FBI warnings, logos, etc.)
-                    if duration < self.MIN_TITLE_DURATION:
-                        logger.info(f"Skipping title {title_num} (duration: {duration}s < {self.MIN_TITLE_DURATION}s)")
+                    if title_num == 0:  # Skip menu domain
                         continue
 
-                    # Get chapters
-                    chapters_info = self._get_chapters_from_vob(first_vob)
-                    num_chapters = len(chapters_info)
+                    self._report_progress("probing_titles", idx, len(title_list))
+                    vob_files_for_title = titles_dict[title_num]
 
-                    # Detect telecine on first chapter
-                    is_telecined = self._detect_telecine(first_vob)
+                    with self._title_vob_concat_list(vob_files_for_title) as concat_list:
+                        if not concat_list:
+                            continue
 
-                    # Extract chapters
-                    title_dir = work_dir / f"title_{title_num:02d}"
-                    title_dir.mkdir(parents=True, exist_ok=True)
+                        # Probe title for duration
+                        probe_info = self._probe_title(concat_list)
+                        duration = probe_info.get("duration", 0)
 
-                    chapter_paths = []
-                    for chapter_idx in range(num_chapters):
-                        chapter_output = title_dir / f"ch_{chapter_idx:02d}.mpg"
-                        if self._extract_chapter(first_vob, chapter_idx, chapter_output):
-                            chapter_paths.append(chapter_output)
+                        if duration < self.MIN_TITLE_DURATION:
+                            logger.info(f"Skipping title {title_num} (duration: {duration:.1f}s < {self.MIN_TITLE_DURATION}s)")
+                            continue
+
+                        # Get chapters and telecine info
+                        chapters_info = self._get_chapters_from_title(concat_list)
+                        is_telecined = self._detect_telecine(concat_list)
+                        num_chapters = len(chapters_info)
+                        if num_chapters == 0:
+                            logger.warning(f"Title {title_num} has duration but no chapters found. Skipping.")
+                            continue
+
+                        # Extract each chapter
+                        title_dir = work_dir / f"title_{title_num:02d}"
+                        chapter_paths = []
+                        for i, chap_info in enumerate(chapters_info):
+                            chapter_output = title_dir / f"ch_{i+1:02d}.mpg"
+                            if self._extract_chapter(concat_list, chap_info, chapter_output):
+                                chapter_paths.append(chapter_output)
 
                     title_info = TitleInfo(
                         title_num=title_num,

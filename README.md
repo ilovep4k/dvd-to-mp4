@@ -2,6 +2,34 @@
 
 Convert DVD ISO files to high-quality H.265 MP4 scene files with professional-grade QTGMC deinterlacing and automatic scene detection.
 
+## Quick Start (macOS)
+
+Clone the repo and run the installer — it handles Homebrew, ffmpeg, VapourSynth, all plugins, and the Python package automatically:
+
+```bash
+git clone https://github.com/ilovep4k/dvd-to-mp4.git
+cd dvd-to-mp4
+./install.sh
+```
+
+After install, add to your PATH (one-time):
+
+```bash
+echo 'export PATH="$HOME/dvd-to-mp4/.venv/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+Then use it:
+
+```bash
+dvd2mp4              # Launch GUI
+dvd2mp4 movie.iso    # Convert via CLI
+dvd2mp4 --check-deps # Verify everything is working
+```
+
+To update later: `cd dvd-to-mp4 && git pull && .venv/bin/pip install -e .`
+
+---
+
 Drop an ISO onto the GUI, walk away, come back to individual scene files — fully deinterlaced from 480i to 59.94fps progressive.
 
 ## What It Does
@@ -275,7 +303,7 @@ dvd-to-mp4/
 ├── pyproject.toml
 ├── README.md
 ├── LICENSE
-├── .gitignore
+├── install.sh
 ├── docs/plans/
 │   ├── 2026-03-08-dvd-to-mp4-design.md
 │   └── 2026-03-08-dvd-to-mp4-implementation.md

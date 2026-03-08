@@ -308,8 +308,8 @@ class ConversionPipeline:
         for encoded_file in encoded_files:
             if encoded_file.exists():
                 dest = final_output_dir / encoded_file.name
-                logger.info(f"Moving {encoded_file.name}")
-                shutil.copy2(encoded_file, dest)
+                logger.info(f"Moving {encoded_file.name} to final output directory.")
+                shutil.move(str(encoded_file), str(dest))
                 organized_files.append(dest)
 
         self._emit_progress("Organize", 1, 4, "Organizing scene files")
@@ -320,8 +320,8 @@ class ConversionPipeline:
                 menu_dir = final_output_dir / "cover"
                 menu_dir.mkdir(exist_ok=True)
                 menu_dest = menu_dir / "menu_video.mp4"
-                logger.info(f"Moving menu video")
-                shutil.copy2(extraction_result.menu_path, menu_dest)
+                logger.info(f"Moving menu video.")
+                shutil.move(str(extraction_result.menu_path), str(menu_dest))
 
         self._emit_progress("Organize", 2, 4, "Organizing menu and images")
 
@@ -332,8 +332,8 @@ class ConversionPipeline:
             for image_path in extraction_result.images:
                 if image_path.exists():
                     dest = images_dir / image_path.name
-                    logger.info(f"Moving image {image_path.name}")
-                    shutil.copy2(image_path, dest)
+                    logger.info(f"Moving image {image_path.name}.")
+                    shutil.move(str(image_path), str(dest))
 
         self._emit_progress("Organize", 3, 4, "Saving metadata")
 

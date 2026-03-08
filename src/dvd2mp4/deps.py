@@ -46,38 +46,43 @@ def _get_install_instructions() -> Dict[str, Dict[str, str]]:
         },
         "vspipe": {
             "macOS": "brew install vapoursynth",
-            "Windows": "choco install vapoursynth -y  OR download from http://www.vapoursynth.com/installer/",
-            "Linux": "apt-get install vapoursynth  (Ubuntu/Debian)\ndnf install vapoursynth  (Fedora)",
-        },
-        "lsdvd": {
-            "macOS": "brew install lsdvd",
-            "Windows": "Download from https://www.dillonb.com/dvd/lsdvd/  OR use WSL with: apt-get install lsdvd",
-            "Linux": "apt-get install lsdvd  (Ubuntu/Debian)\ndnf install lsdvd  (Fedora)",
+            "Windows": "Download installer from http://www.vapoursynth.com/",
+            "Linux": "Install from distribution's package manager (e.g., apt-get install vapoursynth)",
         },
         "scenedetect": {
             "macOS": "pip install scenedetect[opencv]",
             "Windows": "pip install scenedetect[opencv]",
             "Linux": "pip install scenedetect[opencv]",
         },
+        "tkinterdnd2": {
+            "macOS": "pip install tkinterdnd2",
+            "Windows": "pip install tkinterdnd2",
+            "Linux": "pip install tkinterdnd2",
+        },
         "vapoursynth": {
-            "macOS": "brew install vapoursynth  OR pip install vapoursynth",
+            "macOS": "brew install vapoursynth",
             "Windows": "choco install vapoursynth -y  OR download from http://www.vapoursynth.com/installer/",
             "Linux": "apt-get install vapoursynth  (Ubuntu/Debian)\ndnf install vapoursynth  (Fedora)",
         },
         "havsfunc": {
-            "macOS": "pip install havsfunc",
-            "Windows": "pip install havsfunc",
-            "Linux": "pip install havsfunc",
+            "macOS": "vsrepo install havsfunc",
+            "Windows": "vsrepo install havsfunc",
+            "Linux": "vsrepo install havsfunc",
         },
         "mvtools": {
-            "macOS": "pip install mvtools",
-            "Windows": "pip install mvtools",
-            "Linux": "pip install mvtools",
+            "macOS": "vsrepo install mvtools",
+            "Windows": "vsrepo install mvtools",
+            "Linux": "vsrepo install mvtools",
         },
         "nnedi3": {
-            "macOS": "pip install nnedi3",
-            "Windows": "pip install nnedi3",
-            "Linux": "pip install nnedi3",
+            "macOS": "vsrepo install nnedi3",
+            "Windows": "vsrepo install nnedi3",
+            "Linux": "vsrepo install nnedi3",
+        },
+        "ffms2": {
+            "macOS": 'brew install ffms2 && ln -s "$(brew --prefix ffms2)/lib/libffms2.dylib" "$(brew --prefix vapoursynth)/lib/vapoursynth/libffms2.dylib"',
+            "Windows": "Download from https://github.com/FFMS/ffms2/releases and place in VapourSynth plugins directory",
+            "Linux": "apt-get install ffms2  (Ubuntu/Debian)\ndnf install ffms2  (Fedora)",
         },
     }
 
@@ -97,23 +102,29 @@ def _check_python_module(module_name: str) -> bool:
 
 
 def _check_vapoursynth_plugin(plugin_name: str) -> bool:
-    """Check if a VapourSynth plugin is available."""
+    """Check if a VapourSynth plugin is available.
+
+    havsfunc is a Python script importable as a module.
+    mvtools, nnedi3, and ffms2 are binary plugins loaded via vs.core attributes.
+    """
     try:
         import vapoursynth as vs
 
         core = vs.core
-        # Try to load the plugin
         if plugin_name == "havsfunc":
-            import havsfunc
+            import havsfunc  # noqa: F401 — Python script installed by vsrepo
             return True
         elif plugin_name == "mvtools":
-            import mvtools
+            _ = core.mv.Analyse  # raises AttributeError if plugin not loaded
             return True
         elif plugin_name == "nnedi3":
-            import nnedi3
+            _ = core.nnedi3.nnedi3
+            return True
+        elif plugin_name == "ffms2":
+            _ = core.ffms2.Source
             return True
         return False
-    except (ImportError, Exception):
+    except (ImportError, AttributeError, Exception):
         return False
 
 
@@ -139,18 +150,6 @@ def check_all() -> DepsResult:
                 )
             )
 
-    # Optional CLI tools
-    optional_cli_tools = ["lsdvd"]
-    for tool in optional_cli_tools:
-        if not _check_cli_tool(tool):
-            missing.append(
-                MissingDep(
-                    name=tool,
-                    required=False,
-                    install_instructions=instructions.get(tool, {}),
-                )
-            )
-
     # Required Python modules
     required_modules = ["scenedetect", "vapoursynth"]
     for module in required_modules:
@@ -163,8 +162,8 @@ def check_all() -> DepsResult:
                 )
             )
 
-    # Check VapourSynth plugins (required for QTGMC)
-    vapoursynth_plugins = ["havsfunc", "mvtools", "nnedi3"]
+    # Check VapourSynth plugins (required for QTGMC and source loading)
+    vapoursynth_plugins = ["havsfunc", "mvtools", "nnedi3", "ffms2"]
     for plugin in vapoursynth_plugins:
         if not _check_vapoursynth_plugin(plugin):
             missing.append(
