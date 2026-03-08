@@ -253,7 +253,7 @@ class DVDExtractor:
 
         try:
             result = subprocess.run(
-                cmd, check=False, timeout=60, capture_output=True, text=True, stderr=subprocess.PIPE
+                cmd, check=False, timeout=60, capture_output=True, text=True
             )
             output = result.stderr
 
@@ -509,8 +509,12 @@ class DVDExtractor:
                         is_telecined = self._detect_telecine(concat_list)
                         num_chapters = len(chapters_info)
                         if num_chapters == 0:
-                            logger.warning(f"Title {title_num} has duration but no chapters found. Skipping.")
-                            continue
+                            # No chapter markers found — treat whole title as one chapter
+                            logger.warning(
+                                f"Title {title_num}: no chapter markers found, treating as single chapter"
+                            )
+                            chapters_info = [{"start_time": "0", "end_time": str(max(duration, 36000))}]
+                            num_chapters = 1
 
                         # Extract each chapter
                         title_dir = work_dir / f"title_{title_num:02d}"
