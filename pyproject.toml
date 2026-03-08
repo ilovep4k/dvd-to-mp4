@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dvd2mp4"
+version = "0.1.0"
+description = "Convert DVD ISOs to high-quality H.265 MP4 scene files with QTGMC deinterlacing"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Justin Bernabe" },
+]
+keywords = ["dvd", "mp4", "qtgmc", "deinterlace", "vapoursynth", "scene-detection"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Environment :: MacOS X",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Video :: Conversion",
+]
+dependencies = [
+    "scenedetect[opencv]>=0.6.4",
+    "tkinterdnd2>=0.4.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov",
+]
+
+[project.scripts]
+dvd2mp4 = "dvd2mp4.cli:main"
+
+[project.gui-scripts]
+dvd2mp4-gui = "dvd2mp4.cli:main_gui"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
