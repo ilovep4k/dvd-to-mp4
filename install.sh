@@ -113,6 +113,8 @@ VSREPO_CMD="$VENV_DIR/bin/python3 $VSREPO"
 success "vsrepo downloaded"
 
 # ── 8. Install VapourSynth plugins ────────────────────────────────────────────
+info "Updating vsrepo package list..."
+$VSREPO_CMD update
 info "Installing VapourSynth plugins (havsfunc, mvtools, nnedi3)..."
 $VSREPO_CMD install havsfunc mvtools nnedi3
 success "VapourSynth plugins installed"
